@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
 import os
-from PIL import Image, ImageEnhance
-import matplotlib.pyplot as plt
+from PIL import Image, ImageEnhance, ImageFilter
 import random
-import numpy as np
 # Configuration de la page
 st.set_page_config(
     page_title="Dashboard Preuve de Concept",
@@ -165,6 +163,3 @@ with st.expander("ℹ️ Détails Techniques du Projet"):
 
 if st.sidebar.button("Rafraîchir les données"):
     st.rerun()
-
-
-from PIL import ImageFilter
