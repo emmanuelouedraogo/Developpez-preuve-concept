@@ -3,6 +3,8 @@ import pandas as pd
 import os
 from PIL import Image, ImageEnhance, ImageFilter
 import random
+import numpy as np
+import urllib.request
 # Configuration de la page
 st.set_page_config(
     page_title="Dashboard Preuve de Concept",
@@ -20,18 +22,31 @@ pour la segmentation d'images dans un contexte de conduite autonome.
 
 # --- Configuration des chemins ---
 # On cherche le dossier 'results' dans le répertoire courant ou aux chemins probables
+current_dir = os.path.dirname(os.path.abspath(__file__))
 POSSIBLE_PATHS = [
+    os.path.join(current_dir, 'results'),
     './results',
-    os.path.join(os.path.dirname(__file__), 'results'),
     #'/content/drive/MyDrive/P10_Developpez une preuve de concept/results'
     '/results'
 ]
 
 RESULTS_DIR = None
+# On cherche d'abord un dossier qui contient effectivement les images
 for path in POSSIBLE_PATHS:
     if os.path.exists(path):
-        RESULTS_DIR = path
-        break
+        try:
+            if any(f.startswith('comparison_256_') for f in os.listdir(path)):
+                RESULTS_DIR = path
+                break
+        except Exception:
+            continue
+
+# Si non trouvé avec les images, on prend le premier chemin valide par défaut
+if RESULTS_DIR is None:
+    for path in POSSIBLE_PATHS:
+        if os.path.exists(path):
+            RESULTS_DIR = path
+            break
 
 # Si le dossier n'est pas trouvé
 if not RESULTS_DIR:
@@ -78,7 +93,14 @@ st.markdown("Comparaison visuelle entre l'image originale et les prédictions de
 
 if RESULTS_DIR and os.path.exists(RESULTS_DIR):
     # Recherche des images de comparaison générées par le script
-    comparison_images = [f for f in os.listdir(RESULTS_DIR) if f.startswith('comparison_256_') and f.endswith(('.png', '.jpg', '.jpeg'))]
+    target_images = ["comparison_256_val34.png", "comparison_256_val45.png", "comparison_256_val85.png"]
+    
+    # On privilégie les images spécifiques demandées si elles existent
+    comparison_images = [f for f in target_images if os.path.exists(os.path.join(RESULTS_DIR, f))]
+    
+    # Sinon, on cherche toutes les images disponibles
+    if not comparison_images:
+        comparison_images = [f for f in os.listdir(RESULTS_DIR) if f.startswith('comparison_256_') and f.endswith(('.png', '.jpg', '.jpeg'))]
 
     if comparison_images:
         # Sélecteur d'image
@@ -148,7 +170,100 @@ if RESULTS_DIR and os.path.exists(RESULTS_DIR):
         st.info("No dataset images found in the results folder.")
 else:
     st.info("Results folder not accessible for EDA.")
-# --- Section 3: Détails Techniques ---
+
+# --- Section 3: Prédiction Live ---
+st.header("3. Prédiction Live (Optionnel)")
+st.markdown("Testez les modèles entraînés sur vos propres images.")
+
+live_model_dir = RESULTS_DIR if RESULTS_DIR else "."
+
+# Sélecteur de modèle
+model_option = st.selectbox(
+    "Choisir le modèle :",
+    ["YOLOv9-seg", "Mini-Unet"]
+)
+
+# Upload image
+uploaded_file = st.file_uploader("Charger une image pour prédiction", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert('RGB')
+    st.image(image, caption="Image chargée", use_column_width=True)
+    
+    if st.button("Lancer la prédiction"):
+        with st.spinner("Chargement du modèle et inférence..."):
+            try:
+                if "YOLO" in model_option:
+                    # Configuration selon la version choisie
+                    model_filename = "final_best_yolov9.pt"
+                    model_url = "https://github.com/emmanuelouedraogo/Developpez-preuve-concept/releases/download/v0.1.0/final_best_yolov9.pt"
+                    
+                    model_path = os.path.join(live_model_dir, model_filename)
+                    
+                    # Téléchargement automatique si nécessaire
+                    if not os.path.exists(model_path) and model_url:
+                        st.info(f"Téléchargement du modèle {model_filename} depuis GitHub...")
+                        try:
+                            urllib.request.urlretrieve(model_url, model_path)
+                            st.success("Téléchargement terminé.")
+                        except Exception as e:
+                            st.error(f"Erreur lors du téléchargement : {e}")
+                    
+                    # Import dynamique pour éviter les crashs si la lib manque
+                    from ultralytics import YOLO
+                    
+                    if os.path.exists(model_path):
+                        model = YOLO(model_path)
+                        results = model.predict(source=image, conf=0.25)
+                        # plot() retourne un array BGR
+                        res_plotted = results[0].plot()
+                        st.image(res_plotted, caption=f"Résultat {model_option}", use_column_width=True, channels="BGR")
+                    else:
+                        st.warning(f"Modèle introuvable à l'emplacement : {model_path}")
+                        
+                elif model_option == "Mini-Unet":
+                    model_filename = "mini_unet_best.pth"
+                    model_url = "https://github.com/emmanuelouedraogo/Developpez-preuve-concept/releases/download/v0.1.0/mini_unet_best.pth"
+                    model_path = os.path.join(live_model_dir, model_filename)
+                    
+                    # Téléchargement automatique
+                    if not os.path.exists(model_path) and model_url:
+                        st.info(f"Téléchargement du modèle {model_filename} depuis GitHub...")
+                        try:
+                            urllib.request.urlretrieve(model_url, model_path)
+                            st.success("Téléchargement terminé.")
+                        except Exception as e:
+                            st.error(f"Erreur lors du téléchargement : {e}")
+                    
+                    import torch
+                    
+                    if os.path.exists(model_path):
+                        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                        model = torch.load(model_path, map_location=device)
+                        model.eval()
+                        
+                        # Prétraitement
+                        img_resized = image.resize((256, 256))
+                        img_array = np.array(img_resized) / 255.0
+                        img_tensor = torch.from_numpy(img_array).float().permute(2, 0, 1).unsqueeze(0).to(device)
+                        
+                        with torch.no_grad():
+                            pred = model(img_tensor)
+                            mask = torch.argmax(pred, dim=1).squeeze().cpu().numpy()
+                        
+                        # Visualisation simple (mapping des classes sur niveaux de gris)
+                        mask_display = (mask * (255 // 8)).astype(np.uint8)
+                        mask_img = Image.fromarray(mask_display).resize(image.size, resample=Image.NEAREST)
+                        st.image(mask_img, caption="Masque de segmentation (Mini-Unet)", use_column_width=True)
+                    else:
+                        st.warning(f"Modèle introuvable à l'emplacement : {model_path}")
+            
+            except ImportError as e:
+                st.error(f"Librairie manquante : {e}. Installez torch ou ultralytics.")
+            except Exception as e:
+                st.error(f"Erreur lors de la prédiction : {e}")
+
+# --- Section 4: Détails Techniques ---
 with st.expander("ℹ️ Détails Techniques du Projet"):
     st.markdown("""
     **Dataset :** Cityscapes (adapté)
