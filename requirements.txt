@@ -8,6 +8,7 @@ supervision
 Pillow
 numpy
 matplotlib
+ultralytics
 pandas
 seaborn
 scikit-learn
