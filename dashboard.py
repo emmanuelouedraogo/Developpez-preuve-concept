@@ -5,6 +5,8 @@ from PIL import Image, ImageEnhance, ImageFilter
 import random
 import numpy as np
 import urllib.request
+import ultralytics
+from ultralytics import YOLO
 # Configuration de la page
 st.set_page_config(
     page_title="Dashboard Preuve de Concept",
