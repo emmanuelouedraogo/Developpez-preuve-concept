@@ -7,6 +7,7 @@ import numpy as np
 import urllib.request
 import ultralytics
 from ultralytics import YOLO
+import json
 # Configuration de la page
 st.set_page_config(
     page_title="Dashboard Preuve de Concept",
@@ -228,6 +229,13 @@ if uploaded_file is not None:
                     model_url = "https://github.com/emmanuelouedraogo/Developpez-preuve-concept/releases/download/v0.1.0/mini_unet_best.pth"
                     model_path = os.path.join(live_model_dir, model_filename)
                     
+                    # Fichiers de configuration supplémentaires
+                    extra_files = {
+                        "class_mapping.json": "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v0.1.0/class_mapping.json",
+                        "class_weights.json": "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v0.1.0/class_weights.json",
+                        "experiment_config.json": "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v0.1.0/experiment_config.json"
+                    }
+                    
                     # Téléchargement automatique
                     if not os.path.exists(model_path) and model_url:
                         st.info(f"Téléchargement du modèle {model_filename} depuis GitHub...")
@@ -236,6 +244,15 @@ if uploaded_file is not None:
                             st.success("Téléchargement terminé.")
                         except Exception as e:
                             st.error(f"Erreur lors du téléchargement : {e}")
+                    
+                    # Téléchargement des fichiers de config
+                    for fname, furl in extra_files.items():
+                        fpath = os.path.join(live_model_dir, fname)
+                        if not os.path.exists(fpath):
+                            try:
+                                urllib.request.urlretrieve(furl, fpath)
+                            except Exception:
+                                pass
                     
                     import torch
                     import segmentation_models_pytorch as smp
@@ -257,19 +274,90 @@ if uploaded_file is not None:
                         model.to(device)
                         model.eval()
                         
+                        # Chargement de la configuration si disponible
+                        config_path = os.path.join(live_model_dir, "experiment_config.json")
+                        input_h, input_w = 256, 256
+                        if os.path.exists(config_path):
+                            try:
+                                with open(config_path, 'r') as f:
+                                    config = json.load(f)
+                                    if 'img_height' in config: input_h = config['img_height']
+                                    if 'img_width' in config: input_w = config['img_width']
+                            except:
+                                pass
+                        
                         # Prétraitement
-                        img_resized = image.resize((256, 256))
+                        img_resized = image.resize((input_w, input_h))
                         img_array = np.array(img_resized) / 255.0
                         img_tensor = torch.from_numpy(img_array).float().permute(2, 0, 1).unsqueeze(0).to(device)
                         
+                        # Chargement des poids des classes pour post-traitement
+                        weights_path = os.path.join(live_model_dir, "class_weights.json")
+                        class_weights = None
+                        if os.path.exists(weights_path):
+                            try:
+                                with open(weights_path, 'r') as f:
+                                    w_data = json.load(f)
+                                    # Conversion en liste si dictionnaire (ex: {"0": 1.5, "1": ...})
+                                    if isinstance(w_data, dict):
+                                        w_data = [w_data[str(i)] for i in range(len(w_data))]
+                                    class_weights = torch.tensor(w_data).float().to(device)
+                            except Exception:
+                                pass
+                        
                         with torch.no_grad():
                             pred = model(img_tensor)
-                            mask = torch.argmax(pred, dim=1).squeeze().cpu().numpy()
+                            if class_weights is not None and class_weights.shape[0] == pred.shape[1]:
+                                # Application des poids sur les probabilités (Softmax * Weights)
+                                probs = torch.nn.functional.softmax(pred, dim=1)
+                                weighted_probs = probs * class_weights.view(1, -1, 1, 1)
+                                mask = torch.argmax(weighted_probs, dim=1).squeeze().cpu().numpy()
+                            else:
+                                mask = torch.argmax(pred, dim=1).squeeze().cpu().numpy()
                         
-                        # Visualisation simple (mapping des classes sur niveaux de gris)
-                        mask_display = (mask * (255 // 8)).astype(np.uint8)
-                        mask_img = Image.fromarray(mask_display).resize(image.size, resample=Image.NEAREST)
-                        st.image(mask_img, caption="Masque de segmentation (Mini-Unet)", use_column_width=True)
+                        # Visualisation améliorée avec couleurs
+                        mapping_path = os.path.join(live_model_dir, "class_mapping.json")
+                        mask_img = None
+                        
+                        if os.path.exists(mapping_path):
+                            try:
+                                with open(mapping_path, 'r') as f:
+                                    class_map = json.load(f)
+                                
+                                palette = [0] * 768
+                                # Gestion format dict ou list
+                                items = class_map.items() if isinstance(class_map, dict) else enumerate(class_map)
+                                for k, v in items:
+                                    idx = int(k)
+                                    if idx < 256 and 'color' in v:
+                                        palette[idx*3:idx*3+3] = v['color']
+
+                                mask_pil = Image.fromarray(mask.astype(np.uint8), mode='P')
+                                mask_pil.putpalette(palette)
+                                mask_img = mask_pil.convert('RGB')
+                            except Exception:
+                                pass
+                        
+                        if mask_img is None:
+                            # Fallback niveaux de gris
+                            mask_display = (mask * (255 // 8)).astype(np.uint8)
+                            mask_img = Image.fromarray(mask_display)
+                            
+                        mask_img = mask_img.resize(image.size, resample=Image.NEAREST)
+                        
+                        # Affichage côte à côte avec superposition
+                        col_res1, col_res2 = st.columns(2)
+                        
+                        with col_res1:
+                            st.image(mask_img, caption="Masque de segmentation (Mini-Unet)", use_column_width=True)
+                            
+                        with col_res2:
+                            # Superposition
+                            img_base = image.convert("RGBA")
+                            mask_rgba = mask_img.convert("RGBA")
+                            mask_rgba.putalpha(128)
+                            overlay = Image.alpha_composite(img_base, mask_rgba)
+                            st.image(overlay, caption="Superposition", use_column_width=True)
                     else:
                         st.warning(f"Modèle introuvable à l'emplacement : {model_path}")
             
