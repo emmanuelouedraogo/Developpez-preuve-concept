@@ -238,10 +238,23 @@ if uploaded_file is not None:
                             st.error(f"Erreur lors du téléchargement : {e}")
                     
                     import torch
+                    import segmentation_models_pytorch as smp
                     
                     if os.path.exists(model_path):
                         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-                        model = torch.load(model_path, map_location=device)
+                        
+                        # Initialisation de l'architecture (Unet VGG16 8 classes)
+                        model = smp.Unet(
+                            encoder_name="vgg16", 
+                            encoder_weights=None, 
+                            in_channels=3, 
+                            classes=8
+                        )
+                        
+                        # Chargement des poids (state_dict)
+                        state_dict = torch.load(model_path, map_location=device)
+                        model.load_state_dict(state_dict)
+                        model.to(device)
                         model.eval()
                         
                         # Prétraitement
