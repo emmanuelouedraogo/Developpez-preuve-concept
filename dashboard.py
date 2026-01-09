@@ -87,6 +87,34 @@ if os.path.exists(CSV_PATH):
             chart_data_time = df.set_index('Model')['Inférence (ms)']
             st.bar_chart(chart_data_time, color="#FF5722")
 
+    # --- Sous-section: Détails par classe ---
+    st.markdown("---")
+    st.subheader("Détails par Classe (mAP 50-95)")
+    
+    class_csv_path = os.path.join(RESULTS_DIR, 'class_performance.csv') if RESULTS_DIR else "class_performance.csv"
+    
+    # Données fournies
+    class_data = {
+        'Classe': ['Construction', 'Flat', 'Human', 'Nature', 'Object', 'Sky', 'Vehicle', 'Void'],
+        'mAP 50-95': [0.0650, 0.2716, 0.0703, 0.1645, 0.0414, 0.5318, 0.2089, 0.1434]
+    }
+    
+    # Création du CSV si nécessaire
+    if not os.path.exists(class_csv_path):
+        try:
+            pd.DataFrame(class_data).to_csv(class_csv_path, index=False)
+        except Exception:
+            pass # On utilise les données en mémoire si l'écriture échoue
+            
+    # Lecture ou utilisation directe
+    df_class = pd.read_csv(class_csv_path) if os.path.exists(class_csv_path) else pd.DataFrame(class_data)
+    
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        st.dataframe(df_class.style.format({"mAP 50-95": "{:.4f}"}).highlight_max(subset=['mAP 50-95'], color='lightgreen'), use_container_width=True)
+    with c2:
+        st.bar_chart(df_class.set_index('Classe')['mAP 50-95'], color="#2196F3")
+
 else:
     st.warning(f"Le fichier CSV des résultats ({CSV_PATH}) est manquant. Veuillez lancer l'entraînement.")
 
