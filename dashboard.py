@@ -231,7 +231,6 @@ if uploaded_file is not None:
                     
                     # Fichiers de configuration supplémentaires
                     extra_files = {
-                        "class_mapping.json": "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v0.1.0/class_mapping.json",
                         "class_weights.json": "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v0.1.0/class_weights.json",
                         "experiment_config.json": "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v0.1.0/experiment_config.json"
                     }
@@ -316,33 +315,21 @@ if uploaded_file is not None:
                                 mask = torch.argmax(pred, dim=1).squeeze().cpu().numpy()
                         
                         # Visualisation améliorée avec couleurs
-                        mapping_path = os.path.join(live_model_dir, "class_mapping.json")
-                        mask_img = None
+                        # Définition des classes Cityscapes par groupe
+                        group_colors = [
+                            [128, 64, 128], [220, 20, 60], [0, 0, 142], [70, 70, 70],
+                            [220, 220, 0], [107, 142, 35], [70, 130, 180], [0, 0, 0]
+                        ]
+                        group_names = ['flat', 'human', 'vehicle', 'construction', 'object', 'nature', 'sky', 'void']
                         
-                        if os.path.exists(mapping_path):
-                            try:
-                                with open(mapping_path, 'r') as f:
-                                    class_map = json.load(f)
-                                
-                                palette = [0] * 768
-                                # Gestion format dict ou list
-                                items = class_map.items() if isinstance(class_map, dict) else enumerate(class_map)
-                                for k, v in items:
-                                    idx = int(k)
-                                    if idx < 256 and 'color' in v:
-                                        palette[idx*3:idx*3+3] = v['color']
+                        palette = []
+                        for color in group_colors:
+                            palette.extend(color)
+                        palette.extend([0] * (768 - len(palette)))
 
-                                mask_pil = Image.fromarray(mask.astype(np.uint8), mode='P')
-                                mask_pil.putpalette(palette)
-                                mask_img = mask_pil.convert('RGB')
-                            except Exception:
-                                pass
-                        
-                        if mask_img is None:
-                            # Fallback niveaux de gris
-                            mask_display = (mask * (255 // 8)).astype(np.uint8)
-                            mask_img = Image.fromarray(mask_display)
-                            
+                        mask_pil = Image.fromarray(mask.astype(np.uint8), mode='P')
+                        mask_pil.putpalette(palette)
+                        mask_img = mask_pil.convert('RGB')
                         mask_img = mask_img.resize(image.size, resample=Image.NEAREST)
                         
                         # Affichage côte à côte avec superposition
@@ -358,6 +345,14 @@ if uploaded_file is not None:
                             mask_rgba.putalpha(128)
                             overlay = Image.alpha_composite(img_base, mask_rgba)
                             st.image(overlay, caption="Superposition", use_column_width=True)
+                        
+                        # Légende
+                        st.markdown("#### Légende")
+                        legend_cols = st.columns(4)
+                        for i, (name, color) in enumerate(zip(group_names, group_colors)):
+                            with legend_cols[i % 4]:
+                                color_hex = '#{:02x}{:02x}{:02x}'.format(*color)
+                                st.markdown(f"<div style='display:flex;align-items:center;margin-bottom:5px;'><div style='width:20px;height:20px;background-color:{color_hex};margin-right:8px;border:1px solid #ccc;'></div>{name}</div>", unsafe_allow_html=True)
                     else:
                         st.warning(f"Modèle introuvable à l'emplacement : {model_path}")
             
