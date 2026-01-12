@@ -276,7 +276,7 @@ live_model_dir = RESULTS_DIR if RESULTS_DIR else "."
 # Sélecteur de modèle
 model_option = st.selectbox(
     "Choisir le modèle :",
-    ["YOLOv9-seg", "U-Net VGG16 (Keras)"]
+    ["YOLOv9-seg", "Mini-Unet (PyTorch)"]
 )
 
 # Upload image
@@ -317,59 +317,73 @@ if uploaded_file is not None:
                     else:
                         st.warning(f"Modèle introuvable à l'emplacement : {model_path}")
                         
-                elif model_option == "U-Net VGG16 (Keras)":
-                    if not HAS_TF:
-                        st.error("TensorFlow n'est pas installé. Veuillez l'installer via `pip install tensorflow` ou l'ajouter au fichier `requirements.txt`.")
-                        st.stop()
-
-                    # URLs from segmentation_pipeline.py
-                    model_filename = "final_optimized_model.keras"
-                    model_url = "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v.0.0.2/final_optimized_model.keras"
-                    config_url = "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v.0.0.2/class_mapping.json"
-                    weights_url = "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v.0.0.2/class_weights.json"
-                    
+                elif model_option == "Mini-Unet (PyTorch)":
+                    model_filename = "mini_unet_best.pth"
+                    model_url = "https://github.com/emmanuelouedraogo/Developpez-preuve-concept/releases/download/v0.1.0/mini_unet_best.pth"
                     model_path = os.path.join(live_model_dir, model_filename)
-                    config_path = os.path.join(live_model_dir, "class_mapping.json")
-                    weights_path = os.path.join(live_model_dir, "class_weights.json")
                     
                     # Téléchargement automatique
-                    files_to_download = [
-                        (model_path, model_url),
-                        (config_path, config_url),
-                        (weights_path, weights_url)
-                    ]
-                    
-                    for fpath, furl in files_to_download:
-                        if not os.path.exists(fpath):
-                            st.info(f"Téléchargement de {os.path.basename(fpath)}...")
-                            try:
-                                urllib.request.urlretrieve(furl, fpath)
-                            except Exception as e:
-                                st.error(f"Erreur téléchargement {os.path.basename(fpath)}: {e}")
+                    if not os.path.exists(model_path):
+                        st.info(f"Téléchargement du modèle {model_filename} depuis GitHub...")
+                        try:
+                            urllib.request.urlretrieve(model_url, model_path)
+                            st.success("Téléchargement terminé.")
+                        except Exception as e:
+                            st.error(f"Erreur lors du téléchargement : {e}")
                     
                     if os.path.exists(model_path):
-                        # Chargement du modèle Keras
-                        model, config = load_keras_segmentation_model(model_path, config_path, weights_path)
+                        import torch
+                        import segmentation_models_pytorch as smp
                         
-                        # Prétraitement
-                        processed_batch, original_size = preprocess_image_keras(image, img_size=(224, 224))
+                        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                        
+                        # Initialisation de l'architecture (Unet VGG16 8 classes)
+                        model = smp.Unet(
+                            encoder_name="vgg16", 
+                            encoder_weights=None, 
+                            in_channels=3, 
+                            classes=8
+                        )
+                        
+                        # Chargement des poids
+                        try:
+                            state_dict = torch.load(model_path, map_location=device)
+                            model.load_state_dict(state_dict)
+                        except Exception as e:
+                            st.error(f"Erreur chargement des poids: {e}")
+                            st.stop()
+                            
+                        model.to(device)
+                        model.eval()
+                        
+                        # Prétraitement (256x256 pour ce modèle)
+                        input_h, input_w = 256, 256
+                        img_resized = image.resize((input_w, input_h))
+                        img_array = np.array(img_resized) / 255.0
+                        img_tensor = torch.from_numpy(img_array).float().permute(2, 0, 1).unsqueeze(0).to(device)
                         
                         # Prédiction
-                        mask = predict_keras(model, processed_batch, original_size)
+                        with torch.no_grad():
+                            pred = model(img_tensor)
+                            mask = torch.argmax(pred, dim=1).squeeze().cpu().numpy()
                         
-                        # Création de l'image colorée
+                        # Configuration des couleurs (Cityscapes 8 classes)
+                        group_colors = [
+                            [128, 64, 128], [220, 20, 60], [0, 0, 142], [70, 70, 70],
+                            [220, 220, 0], [107, 142, 35], [70, 130, 180], [0, 0, 0]
+                        ]
+                        group_names = ['flat', 'human', 'vehicle', 'construction', 'object', 'nature', 'sky', 'void']
+                        
+                        # Création du masque coloré
+                        config = {'group_colors': group_colors, 'group_names': group_names}
                         mask_img = create_colored_mask(mask, config)
                         mask_img = mask_img.resize(image.size, resample=Image.NEAREST)
-                        
-                        # Récupération des infos pour la légende
-                        group_names = config.get('group_names', [])
-                        group_colors = config.get('group_colors', [])
                         
                         # Affichage côte à côte avec superposition
                         col_res1, col_res2 = st.columns(2)
                         
                         with col_res1:
-                            st.image(mask_img, caption="Masque de segmentation (U-Net VGG16)", use_column_width=True)
+                            st.image(mask_img, caption="Masque de segmentation (Mini-Unet)", use_column_width=True)
                             
                         with col_res2:
                             # Superposition
@@ -399,10 +413,10 @@ with st.expander("ℹ️ Détails Techniques du Projet"):
     st.markdown("""
     **Dataset :** Cityscapes (adapté)
     **Classes :** 8 classes (flat, human, vehicle, construction, object, nature, sky, void)
-    **Taille d'entrée :** 256x256 pixels (YOLO), 224x224 pixels (U-Net VGG16)
+    **Taille d'entrée :** 256x256 pixels
     
     **Modèles testés :**
-    1.  **U-Net VGG16 (Keras) :** Architecture encoder-decoder avec Backbone VGG16, optimisée.
+    1.  **Mini-Unet (PyTorch) :** Architecture encoder-decoder avec Backbone VGG16.
     2.  **YOLOv8n-seg :** Modèle SOTA pour la segmentation d'instance/sémantique, optimisé pour la vitesse.
     3.  **YOLOv9c-seg :** Version plus récente et plus complexe de YOLO.
     """)
