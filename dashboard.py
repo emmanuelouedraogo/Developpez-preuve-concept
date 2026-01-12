@@ -318,8 +318,8 @@ if uploaded_file is not None:
                         st.warning(f"Modèle introuvable à l'emplacement : {model_path}")
                         
                 elif model_option == "Mini-Unet (PyTorch)":
-                    model_filename = "mini_unet_best.pth"
-                    model_url = "https://github.com/emmanuelouedraogo/Developpez-preuve-concept/releases/download/v0.1.0/mini_unet_best.pth"
+                    model_filename = "best_mini_unet_vgg16.pth"
+                    model_url = "https://github.com/emmanuelouedraogo/Developpez-preuve-concept/releases/download/v0.1.0/best_mini_unet_vgg16.pth"
                     model_path = os.path.join(live_model_dir, model_filename)
                     
                     # Téléchargement automatique
