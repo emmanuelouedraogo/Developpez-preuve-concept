@@ -8,6 +8,7 @@ import urllib.request
 import ultralytics
 from ultralytics import YOLO
 import json
+import tensorflow as tf
 # Configuration de la page
 st.set_page_config(
     page_title="Dashboard Preuve de Concept",
@@ -202,6 +203,66 @@ if RESULTS_DIR and os.path.exists(RESULTS_DIR):
 else:
     st.info("Results folder not accessible for EDA.")
 
+# --- Fonctions utilitaires pour le modèle Keras (U-Net VGG16) ---
+def create_weighted_loss(class_weights):
+    class_weights_tensor = tf.constant(class_weights, dtype=tf.float32)
+    def weighted_loss(y_true, y_pred):
+        y_true = tf.cast(y_true, tf.int32)
+        pixel_weights = tf.gather(class_weights_tensor, y_true)
+        scce = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False, reduction='none')
+        unweighted_loss = scce(y_true, y_pred)
+        weighted_loss = unweighted_loss * pixel_weights
+        return tf.reduce_mean(weighted_loss)
+    return weighted_loss
+
+def load_keras_segmentation_model(model_path, config_path, class_weights_path):
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    
+    # Chargement des poids
+    if os.path.exists(class_weights_path):
+        with open(class_weights_path, 'r') as f:
+            class_weights = json.load(f)
+    else:
+        class_weights = [1.0] * config.get('num_classes', 8)
+        
+    custom_objects = {'weighted_loss': create_weighted_loss(class_weights)}
+    model = tf.keras.models.load_model(model_path, custom_objects=custom_objects)
+    return model, config
+
+def preprocess_image_keras(image_pil, img_size=(224, 224)):
+    image_array = np.array(image_pil)
+    original_size = image_array.shape[:2]
+    
+    image_resized = tf.image.resize(image_array, img_size, method='bilinear')
+    image_normalized = tf.cast(image_resized, tf.float32) / 255.0
+    image_batch = tf.expand_dims(image_normalized, axis=0)
+    
+    return image_batch, original_size
+
+def predict_keras(model, processed_image_batch, original_size):
+    predictions = model.predict(processed_image_batch, verbose=0)
+    pred_mask_resized = tf.argmax(predictions, axis=-1)[0].numpy()
+    
+    pred_mask_original = tf.image.resize(
+        np.expand_dims(pred_mask_resized, axis=-1),
+        original_size,
+        method='nearest'
+    )
+    return tf.squeeze(pred_mask_original, axis=-1).numpy()
+
+def create_colored_mask(prediction_mask, config):
+    if 'group_colors' not in config:
+        return Image.fromarray((prediction_mask * 30).astype(np.uint8)) # Fallback
+        
+    colors = np.array(config['group_colors'], dtype=np.uint8)
+    # Gestion des index hors limites si nécessaire
+    num_colors = len(colors)
+    mask_safe = np.clip(prediction_mask, 0, num_colors - 1)
+    
+    rgb_mask = colors[mask_safe]
+    return Image.fromarray(rgb_mask.astype(np.uint8))
+
 # --- Section 3: Prédiction Live ---
 st.header("3. Prédiction Live (Optionnel)")
 st.markdown("Testez les modèles entraînés sur vos propres images.")
@@ -211,7 +272,7 @@ live_model_dir = RESULTS_DIR if RESULTS_DIR else "."
 # Sélecteur de modèle
 model_option = st.selectbox(
     "Choisir le modèle :",
-    ["YOLOv9-seg", "Mini-Unet"]
+    ["YOLOv9-seg", "Mini-U-Net VGG16 (Keras)"]
 )
 
 # Upload image
@@ -394,10 +455,10 @@ with st.expander("ℹ️ Détails Techniques du Projet"):
     st.markdown("""
     **Dataset :** Cityscapes (adapté)
     **Classes :** 8 classes (flat, human, vehicle, construction, object, nature, sky, void)
-    **Taille d'entrée :** 256x256 pixels
+    **Taille d'entrée :** 256x256 pixels (YOLO), 224x224 pixels (U-Net VGG16)
     
     **Modèles testés :**
-    1.  **Mini-Unet :** Architecture encoder-decoder classique (Backbone VGG16).
+    1.  **U-Net VGG16 (Keras) :** Architecture encoder-decoder avec Backbone VGG16, optimisée.
     2.  **YOLOv8n-seg :** Modèle SOTA pour la segmentation d'instance/sémantique, optimisé pour la vitesse.
     3.  **YOLOv9c-seg :** Version plus récente et plus complexe de YOLO.
     """)
