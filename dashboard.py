@@ -8,7 +8,11 @@ import urllib.request
 import ultralytics
 from ultralytics import YOLO
 import json
-import tensorflow as tf
+try:
+    import tensorflow as tf
+    HAS_TF = True
+except ImportError:
+    HAS_TF = False
 # Configuration de la page
 st.set_page_config(
     page_title="Dashboard Preuve de Concept",
@@ -272,7 +276,7 @@ live_model_dir = RESULTS_DIR if RESULTS_DIR else "."
 # Sélecteur de modèle
 model_option = st.selectbox(
     "Choisir le modèle :",
-    ["YOLOv9-seg", "Mini-U-Net VGG16 (Keras)"]
+    ["YOLOv9-seg", "U-Net VGG16 (Keras)"]
 )
 
 # Upload image
@@ -313,119 +317,59 @@ if uploaded_file is not None:
                     else:
                         st.warning(f"Modèle introuvable à l'emplacement : {model_path}")
                         
-                elif model_option == "Mini-Unet":
-                    model_filename = "mini_unet_best.pth"
-                    model_url = "https://github.com/emmanuelouedraogo/Developpez-preuve-concept/releases/download/v0.1.0/mini_unet_best.pth"
-                    model_path = os.path.join(live_model_dir, model_filename)
+                elif model_option == "U-Net VGG16 (Keras)":
+                    if not HAS_TF:
+                        st.error("TensorFlow n'est pas installé. Impossible d'utiliser ce modèle.")
+                        st.stop()
+
+                    # URLs from segmentation_pipeline.py
+                    model_filename = "final_optimized_model.keras"
+                    model_url = "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v.0.0.2/final_optimized_model.keras"
+                    config_url = "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v.0.0.2/class_mapping.json"
+                    weights_url = "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v.0.0.2/class_weights.json"
                     
-                    # Fichiers de configuration supplémentaires
-                    extra_files = {
-                        "class_weights.json": "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v0.1.0/class_weights.json",
-                        "experiment_config.json": "https://github.com/emmanuelouedraogo/voiture-autonaume/releases/download/v0.1.0/experiment_config.json"
-                    }
+                    model_path = os.path.join(live_model_dir, model_filename)
+                    config_path = os.path.join(live_model_dir, "class_mapping.json")
+                    weights_path = os.path.join(live_model_dir, "class_weights.json")
                     
                     # Téléchargement automatique
-                    if not os.path.exists(model_path) and model_url:
-                        st.info(f"Téléchargement du modèle {model_filename} depuis GitHub...")
-                        try:
-                            urllib.request.urlretrieve(model_url, model_path)
-                            st.success("Téléchargement terminé.")
-                        except Exception as e:
-                            st.error(f"Erreur lors du téléchargement : {e}")
+                    files_to_download = [
+                        (model_path, model_url),
+                        (config_path, config_url),
+                        (weights_path, weights_url)
+                    ]
                     
-                    # Téléchargement des fichiers de config
-                    for fname, furl in extra_files.items():
-                        fpath = os.path.join(live_model_dir, fname)
+                    for fpath, furl in files_to_download:
                         if not os.path.exists(fpath):
+                            st.info(f"Téléchargement de {os.path.basename(fpath)}...")
                             try:
                                 urllib.request.urlretrieve(furl, fpath)
-                            except Exception:
-                                pass
-                    
-                    import torch
-                    import segmentation_models_pytorch as smp
+                            except Exception as e:
+                                st.error(f"Erreur téléchargement {os.path.basename(fpath)}: {e}")
                     
                     if os.path.exists(model_path):
-                        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-                        
-                        # Initialisation de l'architecture (Unet VGG16 8 classes)
-                        model = smp.Unet(
-                            encoder_name="vgg16", 
-                            encoder_weights=None, 
-                            in_channels=3, 
-                            classes=8
-                        )
-                        
-                        # Chargement des poids (state_dict)
-                        state_dict = torch.load(model_path, map_location=device)
-                        model.load_state_dict(state_dict)
-                        model.to(device)
-                        model.eval()
-                        
-                        # Chargement de la configuration si disponible
-                        config_path = os.path.join(live_model_dir, "experiment_config.json")
-                        input_h, input_w = 256, 256
-                        if os.path.exists(config_path):
-                            try:
-                                with open(config_path, 'r') as f:
-                                    config = json.load(f)
-                                    if 'img_height' in config: input_h = config['img_height']
-                                    if 'img_width' in config: input_w = config['img_width']
-                            except:
-                                pass
+                        # Chargement du modèle Keras
+                        model, config = load_keras_segmentation_model(model_path, config_path, weights_path)
                         
                         # Prétraitement
-                        img_resized = image.resize((input_w, input_h))
-                        img_array = np.array(img_resized) / 255.0
-                        img_tensor = torch.from_numpy(img_array).float().permute(2, 0, 1).unsqueeze(0).to(device)
+                        processed_batch, original_size = preprocess_image_keras(image, img_size=(224, 224))
                         
-                        # Chargement des poids des classes pour post-traitement
-                        weights_path = os.path.join(live_model_dir, "class_weights.json")
-                        class_weights = None
-                        if os.path.exists(weights_path):
-                            try:
-                                with open(weights_path, 'r') as f:
-                                    w_data = json.load(f)
-                                    # Conversion en liste si dictionnaire (ex: {"0": 1.5, "1": ...})
-                                    if isinstance(w_data, dict):
-                                        w_data = [w_data[str(i)] for i in range(len(w_data))]
-                                    class_weights = torch.tensor(w_data).float().to(device)
-                            except Exception:
-                                pass
+                        # Prédiction
+                        mask = predict_keras(model, processed_batch, original_size)
                         
-                        with torch.no_grad():
-                            pred = model(img_tensor)
-                            if class_weights is not None and class_weights.shape[0] == pred.shape[1]:
-                                # Application des poids sur les probabilités (Softmax * Weights)
-                                probs = torch.nn.functional.softmax(pred, dim=1)
-                                weighted_probs = probs * class_weights.view(1, -1, 1, 1)
-                                mask = torch.argmax(weighted_probs, dim=1).squeeze().cpu().numpy()
-                            else:
-                                mask = torch.argmax(pred, dim=1).squeeze().cpu().numpy()
-                        
-                        # Visualisation améliorée avec couleurs
-                        # Définition des classes Cityscapes par groupe
-                        group_colors = [
-                            [128, 64, 128], [220, 20, 60], [0, 0, 142], [70, 70, 70],
-                            [220, 220, 0], [107, 142, 35], [70, 130, 180], [0, 0, 0]
-                        ]
-                        group_names = ['flat', 'human', 'vehicle', 'construction', 'object', 'nature', 'sky', 'void']
-                        
-                        palette = []
-                        for color in group_colors:
-                            palette.extend(color)
-                        palette.extend([0] * (768 - len(palette)))
-
-                        mask_pil = Image.fromarray(mask.astype(np.uint8), mode='P')
-                        mask_pil.putpalette(palette)
-                        mask_img = mask_pil.convert('RGB')
+                        # Création de l'image colorée
+                        mask_img = create_colored_mask(mask, config)
                         mask_img = mask_img.resize(image.size, resample=Image.NEAREST)
+                        
+                        # Récupération des infos pour la légende
+                        group_names = config.get('group_names', [])
+                        group_colors = config.get('group_colors', [])
                         
                         # Affichage côte à côte avec superposition
                         col_res1, col_res2 = st.columns(2)
                         
                         with col_res1:
-                            st.image(mask_img, caption="Masque de segmentation (Mini-Unet)", use_column_width=True)
+                            st.image(mask_img, caption="Masque de segmentation (U-Net VGG16)", use_column_width=True)
                             
                         with col_res2:
                             # Superposition
