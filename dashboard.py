@@ -319,7 +319,7 @@ if uploaded_file is not None:
                         
                 elif model_option == "U-Net VGG16 (Keras)":
                     if not HAS_TF:
-                        st.error("TensorFlow n'est pas installé. Impossible d'utiliser ce modèle.")
+                        st.error("TensorFlow n'est pas installé. Veuillez l'installer via `pip install tensorflow` ou l'ajouter au fichier `requirements.txt`.")
                         st.stop()
 
                     # URLs from segmentation_pipeline.py
