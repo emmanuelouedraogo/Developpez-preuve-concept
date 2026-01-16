@@ -8,7 +8,11 @@ import urllib.request
 import ultralytics
 from ultralytics import YOLO
 import json
-import plotly.express as px
+try:
+    import plotly.express as px
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
 try:
     import tensorflow as tf
     HAS_TF = True
@@ -155,9 +159,12 @@ if os.path.exists(CSV_PATH):
             df_cm.columns = class_names
             df_cm.index = class_names
             
-        fig_cm = px.imshow(df_cm, text_auto=True, aspect="auto", color_continuous_scale='Blues',
-                           labels=dict(x="Classe Prédite", y="Classe Réelle", color="Nombre de Pixels"))
-        st.plotly_chart(fig_cm, use_container_width=True)
+        if HAS_PLOTLY:
+            fig_cm = px.imshow(df_cm, text_auto=True, aspect="auto", color_continuous_scale='Blues',
+                               labels=dict(x="Classe Prédite", y="Classe Réelle", color="Nombre de Pixels"))
+            st.plotly_chart(fig_cm, use_container_width=True)
+        else:
+            st.warning("La librairie 'plotly' n'est pas installée. Impossible d'afficher la matrice interactive.")
     else:
         st.info("Aucune donnée de matrice de confusion (CSV) trouvée. Veuillez relancer l'entraînement.")
 

@@ -1,12 +1,7 @@
-torch 
-torchvision 
-opencv-python-headless
-ultralytics 
-segmentation-models-pytorch 
-albumentations
 streamlit
 pandas
 numpy
 Pillow
 ultralytics
+plotly
 tensorflow
