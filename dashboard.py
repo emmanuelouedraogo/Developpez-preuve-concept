@@ -8,6 +8,7 @@ import urllib.request
 import ultralytics
 from ultralytics import YOLO
 import json
+import plotly.express as px
 try:
     import tensorflow as tf
     HAS_TF = True
@@ -62,6 +63,18 @@ if not RESULTS_DIR:
     # On continue quand même pour afficher l'interface, mais sans données
 else:
     st.success(f"Dossier de résultats chargé : `{RESULTS_DIR}`")
+
+# --- Sidebar : Téléchargement du Rapport ---
+if RESULTS_DIR:
+    report_path = os.path.join(RESULTS_DIR, 'report.pdf')
+    if os.path.exists(report_path):
+        with open(report_path, "rb") as pdf_file:
+            st.sidebar.download_button(
+                label="📄 Télécharger le Rapport PDF",
+                data=pdf_file,
+                file_name="rapport_segmentation.pdf",
+                mime="application/pdf"
+            )
 
 CSV_PATH = os.path.join(RESULTS_DIR, 'final_model_comparison_256.csv') if RESULTS_DIR else "final_model_comparison_256.csv"
 
@@ -120,6 +133,34 @@ if os.path.exists(CSV_PATH):
     with c2:
         st.bar_chart(df_class.set_index('Classe')['mAP 50-95'], color="#2196F3")
 
+    # --- Matrice de Confusion Interactive ---
+    st.markdown("---")
+    st.subheader("Matrice de Confusion Interactive")
+    
+    cm_files = {}
+    if RESULTS_DIR:
+        if os.path.exists(os.path.join(RESULTS_DIR, 'mini_unet_cm.csv')):
+            cm_files["Mini-Unet"] = os.path.join(RESULTS_DIR, 'mini_unet_cm.csv')
+        if os.path.exists(os.path.join(RESULTS_DIR, 'optimized_confusion_matrix.csv')):
+            cm_files["YOLO Optimisé"] = os.path.join(RESULTS_DIR, 'optimized_confusion_matrix.csv')
+    
+    if cm_files:
+        selected_cm_model = st.selectbox("Choisir le modèle :", list(cm_files.keys()))
+        cm_path = cm_files[selected_cm_model]
+        
+        df_cm = pd.read_csv(cm_path)
+        # Mapping des noms de classes si les dimensions correspondent
+        class_names = ['Flat', 'Human', 'Vehicle', 'Construction', 'Object', 'Nature', 'Sky', 'Void']
+        if df_cm.shape[1] == len(class_names):
+            df_cm.columns = class_names
+            df_cm.index = class_names
+            
+        fig_cm = px.imshow(df_cm, text_auto=True, aspect="auto", color_continuous_scale='Blues',
+                           labels=dict(x="Classe Prédite", y="Classe Réelle", color="Nombre de Pixels"))
+        st.plotly_chart(fig_cm, use_container_width=True)
+    else:
+        st.info("Aucune donnée de matrice de confusion (CSV) trouvée. Veuillez relancer l'entraînement.")
+
 else:
     st.warning(f"Le fichier CSV des résultats ({CSV_PATH}) est manquant. Veuillez lancer l'entraînement.")
 
@@ -156,6 +197,49 @@ st.header("2.5. Exploratory Data Analysis")
 st.markdown("Exploring the dataset with sample images and transformations.")
 
 if RESULTS_DIR and os.path.exists(RESULTS_DIR):
+    # --- Statistiques du Dataset (Distribution & Poids) ---
+    st.subheader("Statistiques du Dataset")
+    
+    dist_csv_path = os.path.join(RESULTS_DIR, 'class_distribution.csv')
+    weights_json_path = os.path.join(RESULTS_DIR, 'class_weights.json')
+    
+    col_eda_1, col_eda_2 = st.columns(2)
+    df_dist = None
+    
+    with col_eda_1:
+        if os.path.exists(dist_csv_path):
+            st.markdown("**Distribution des Classes (%)**")
+            df_dist = pd.read_csv(dist_csv_path)
+            st.bar_chart(df_dist.set_index('Classe')['Pourcentage (%)'], color="#4CAF50")
+            with st.expander("Voir les données de distribution"):
+                st.dataframe(df_dist, use_container_width=True)
+        else:
+            st.info("Fichier class_distribution.csv non trouvé.")
+
+    with col_eda_2:
+        if os.path.exists(weights_json_path):
+            st.markdown("**Poids des Classes (Calculés)**")
+            try:
+                with open(weights_json_path, 'r') as f:
+                    weights_data = json.load(f)
+                
+                # Utilisation des noms de classes du CSV si disponible
+                if df_dist is not None and len(df_dist) == len(weights_data):
+                    class_names = df_dist['Classe'].tolist()
+                else:
+                    class_names = [f"Class {i}" for i in range(len(weights_data))]
+                
+                df_weights = pd.DataFrame({'Classe': class_names, 'Poids': weights_data})
+                st.bar_chart(df_weights.set_index('Classe')['Poids'], color="#FF9800")
+                with st.expander("Voir les poids calculés"):
+                    st.dataframe(df_weights, use_container_width=True)
+            except Exception as e:
+                st.error(f"Erreur lecture JSON: {e}")
+        else:
+            st.info("Fichier class_weights.json non trouvé.")
+            
+    st.divider()
+
     # Get all image files from the directory
     all_images = [f for f in os.listdir(RESULTS_DIR) if f.endswith(('.png', '.jpg', '.jpeg'))]
 
