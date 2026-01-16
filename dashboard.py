@@ -155,9 +155,15 @@ if os.path.exists(CSV_PATH):
         df_cm = pd.read_csv(cm_path)
         # Mapping des noms de classes si les dimensions correspondent
         class_names = ['Flat', 'Human', 'Vehicle', 'Construction', 'Object', 'Nature', 'Sky', 'Void']
+
+        # Gestion du cas où une classe supplémentaire est présente (ex: 9 colonnes pour 8 classes)
+        if df_cm.shape[1] == 9 and len(class_names) == 8:
+            class_names.append('Background')
+
         if df_cm.shape[1] == len(class_names):
             df_cm.columns = class_names
-            df_cm.index = class_names
+            if df_cm.shape[0] == len(class_names):
+                df_cm.index = class_names
             
         if HAS_PLOTLY:
             fig_cm = px.imshow(df_cm, text_auto=True, aspect="auto", color_continuous_scale='Blues',
