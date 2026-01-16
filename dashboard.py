@@ -247,54 +247,6 @@ if RESULTS_DIR and os.path.exists(RESULTS_DIR):
             
     st.divider()
 
-    # Get all image files from the directory
-    all_images = [f for f in os.listdir(RESULTS_DIR) if f.endswith(('.png', '.jpg', '.jpeg'))]
-
-    # Filter out comparison images to only show original dataset images
-    dataset_images = [f for f in all_images if not f.startswith('comparison_256_')]
-
-    if dataset_images:
-        # Sample display of images
-        num_samples = min(5, len(dataset_images))
-        sample_images = random.sample(dataset_images, num_samples)
-
-        st.subheader("Sample Images from Dataset")
-        cols = st.columns(num_samples)
-        for i, img_file in enumerate(sample_images):
-            img_path = os.path.join(RESULTS_DIR, img_file)
-            img = Image.open(img_path)
-            cols[i].image(img, use_column_width=True, caption=img_file)
-
-        # Image Transformations (example: equalization and blurring)
-        st.subheader("Image Transformations")
-        selected_image = st.selectbox("Select an image for transformation:", sample_images)
-        image_path = os.path.join(RESULTS_DIR, selected_image)
-        img = Image.open(image_path)
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.image(img, caption=f"Original: {selected_image}", use_column_width=True)
-
-        with col2:
-            # Equalization
-            img_eq = ImageEnhance.Contrast(img).enhance(1.5)  # Increase contrast for equalization effect
-            st.image(img_eq, caption="Equalized", use_column_width=True)
-
-        col3, col4 = st.columns(2)
-        with col3:
-             # Blurring
-            img_blur = img.filter(ImageFilter.BLUR)
-            st.image(img_blur, caption="Blurred", use_column_width=True)
-        
-        with col4:
-            # Convert the image to grayscale
-            img_gray = img.convert('L')
-            st.image(img_gray, caption="Grayscale", use_column_width=True)
-
-
-    else:
-        st.info("No dataset images found in the results folder.")
 else:
     st.info("Results folder not accessible for EDA.")
 
